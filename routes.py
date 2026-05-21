@@ -1,7 +1,8 @@
-"""MIDI Capo plugin — extract tuning offsets from PSARC."""
+"""MIDI Capo plugin — extract tuning offsets from PSARC or sloppak."""
 
 import json
 from functools import lru_cache
+from pathlib import Path
 
 
 def _split_cent_offset(cent_offset):
@@ -20,6 +21,32 @@ def _apply_semitone_shift(offsets, shift, arr_name):
     n_strings = 4 if arr_name == "Bass" else 6
     return [o + shift if i < n_strings else o
             for i, o in enumerate(offsets)]
+
+
+@lru_cache(maxsize=256)
+def _parse_sloppak_tunings(sloppak_path: str) -> dict[str, tuple]:
+    """Parse and cache all arrangement tunings from a sloppak manifest.
+
+    Sloppak tunings already include any cent/semitone adjustment baked in
+    (no separate CentOffset field), so residual_cents is always 0.
+    Returns {arr_name: (offsets_tuple, residual_cents)}.
+    """
+    from sloppak import load_manifest
+    manifest = load_manifest(Path(sloppak_path))
+    arr_tunings: dict[str, tuple] = {}
+    for entry in manifest.get("arrangements", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name or name in ("Vocals", "ShowLights", "JVocals"):
+            continue
+        tun = entry.get("tuning")
+        if not isinstance(tun, list) or not tun:
+            continue
+        # Normalize to 6 slots (sloppak spec allows 5/7-string content).
+        offsets = [int(tun[i]) if i < len(tun) else 0 for i in range(6)]
+        arr_tunings[name] = (tuple(offsets), 0)
+    return arr_tunings
 
 
 @lru_cache(maxsize=256)
@@ -68,11 +95,20 @@ def setup(app, context):
         if not dlc:
             return {"error": "DLC folder not configured"}
 
-        psarc_path = dlc / filename
-        if not psarc_path.exists():
+        song_path = dlc / filename
+        if not song_path.exists():
             return {"error": "File not found"}
 
-        arr_tunings = _parse_tunings(str(psarc_path))
+        lower = str(song_path).lower()
+        try:
+            if lower.endswith(".psarc"):
+                arr_tunings = _parse_tunings(str(song_path))
+            elif lower.endswith(".sloppak"):
+                arr_tunings = _parse_sloppak_tunings(str(song_path))
+            else:
+                return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}
+        except (ValueError, OSError, KeyError):
+            return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}
 
         if not arr_tunings:
             return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}

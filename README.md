@@ -21,6 +21,9 @@ A plugin for [Slopsmith](https://github.com/byrongamatos/slopsmith) that sends M
 
 ## What's New
 
+### v1.5.3
+- **Sloppak support** ([#6](https://github.com/masc0t/slopsmith-plugin-midi-capo/issues/6)) — tuning is now read from `.sloppak` manifests in addition to PSARC, so the capo engages correctly on Slopsmith's native pack format. Previously the endpoint raised a 500 on sloppak songs; it now returns the manifest's per-arrangement tuning, or falls back to no-shift on unreadable/unknown formats.
+
 ### v1.5.2
 - **Fix: Standard profile (Fractal / Helix / Boss / etc.) sends wrong CC for E Standard** — `ccBypass` was `0`, which maps to −24 semitones on a 0–127 CC range centered at 64. Changed to `64` (the correct linear-formula center). A startup migration updates any saved `ccBypass = 0` values in localStorage automatically — no reconfiguration needed.
 
@@ -89,11 +92,11 @@ docker compose restart
 1. Connect your modeler via USB MIDI — **or**, in Slopsmith desktop, load a MIDI-capable VST into your audio chain
 2. Go to **Settings** and select your device from the **Device** dropdown under MIDI Capo — this populates the CC#, shift range, and CC range as defaults, but all fields remain editable
 3. Go to **Capo** in the navigation — pick your output from the device selector (external MIDI device or **Internal VST (Slopsmith)**) and the plugin sends a center value (0 shift)
-4. When a song loads, the plugin extracts tuning offsets from the PSARC (with CentOffset correction) for the active arrangement and calculates the semitone shift
+4. When a song loads, the plugin extracts tuning offsets — from the PSARC (with CentOffset correction) or from the sloppak manifest — for the active arrangement and calculates the semitone shift
 5. The corresponding CC value is sent automatically to your MIDI device — tuning is fetched in parallel with song loading for minimal delay
 6. Use the **Test** button to manually send a shift and verify the correct pitch change on your device
 
-> **Note:** The plugin includes a server-side route (`routes.py`) that reads tuning data directly from PSARC files, so it works without any modifications to the Slopsmith core.
+> **Note:** The plugin includes a server-side route (`routes.py`) that reads tuning data directly from PSARC and sloppak files, so it works without any modifications to the Slopsmith core.
 
 ## Device Setup
 
