@@ -19,6 +19,9 @@ A plugin for [Slopsmith](https://github.com/byrongamatos/slopsmith) that sends M
 
 ## What's New
 
+### v1.4.1
+- **Sloppak crash fix** — the tuning endpoint no longer returns a 500 on `.sloppak` songs (Slopsmith's native pack format). midi_capo only understands PSARC tuning data, so it now falls through to the default (no shift) response for other formats instead of raising.
+
 ### v1.4
 - **Internal VST output** — when running inside Slopsmith desktop, the device dropdown now includes an **Internal VST (Slopsmith)** option that routes CC messages directly to every VST slot in your audio chain. No USB MIDI hardware or Web MIDI access required.
 - **Auto-select** — if no external device has been saved, the internal output is selected by default in desktop mode.
