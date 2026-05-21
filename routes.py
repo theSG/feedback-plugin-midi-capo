@@ -1,7 +1,8 @@
-"""MIDI Capo plugin — extract tuning offsets from PSARC."""
+"""MIDI Capo plugin — extract tuning offsets from PSARC or sloppak."""
 
 import json
 from functools import lru_cache
+from pathlib import Path
 
 
 def _apply_cent_offset(offsets, cent_offset, arr_name):
@@ -12,6 +13,31 @@ def _apply_cent_offset(offsets, cent_offset, arr_name):
     n_strings = 4 if arr_name == "Bass" else 6
     return [o + shift if i < n_strings else o
             for i, o in enumerate(offsets)]
+
+
+@lru_cache(maxsize=256)
+def _parse_sloppak_tunings(sloppak_path: str) -> dict[str, tuple[int, ...]]:
+    """Parse and cache all arrangement tunings from a sloppak manifest.
+
+    Sloppak tunings already include any cent/semitone adjustment baked in
+    (no separate CentOffset field), so no further correction is needed.
+    """
+    from sloppak import load_manifest
+    manifest = load_manifest(Path(sloppak_path))
+    arr_tunings: dict[str, tuple[int, ...]] = {}
+    for entry in manifest.get("arrangements", []) or []:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("name", "")).strip()
+        if not name or name in ("Vocals", "ShowLights", "JVocals"):
+            continue
+        tun = entry.get("tuning")
+        if not isinstance(tun, list) or not tun:
+            continue
+        # Normalize to 6 slots (sloppak spec allows 5/7-string content).
+        offsets = [int(tun[i]) if i < len(tun) else 0 for i in range(6)]
+        arr_tunings[name] = tuple(offsets)
+    return arr_tunings
 
 
 @lru_cache(maxsize=256)
@@ -58,19 +84,19 @@ def setup(app, context):
         if not dlc:
             return {"error": "DLC folder not configured"}
 
-        psarc_path = dlc / filename
-        if not psarc_path.exists():
+        song_path = dlc / filename
+        if not song_path.exists():
             return {"error": "File not found"}
 
-        # Sloppak files have a different layout; midi_capo only understands
-        # PSARC. Bail gracefully so the renderer gets a default tuning
-        # instead of a 500.
-        if not str(psarc_path).lower().endswith(".psarc"):
-            return {"tuning": [0, 0, 0, 0, 0, 0]}
-
+        lower = str(song_path).lower()
         try:
-            arr_tunings = _parse_tunings(str(psarc_path))
-        except (ValueError, OSError):
+            if lower.endswith(".psarc"):
+                arr_tunings = _parse_tunings(str(song_path))
+            elif lower.endswith(".sloppak"):
+                arr_tunings = _parse_sloppak_tunings(str(song_path))
+            else:
+                return {"tuning": [0, 0, 0, 0, 0, 0]}
+        except (ValueError, OSError, KeyError):
             return {"tuning": [0, 0, 0, 0, 0, 0]}
 
         if not arr_tunings:
