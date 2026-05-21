@@ -5,26 +5,35 @@ from functools import lru_cache
 from pathlib import Path
 
 
-def _apply_cent_offset(offsets, cent_offset, arr_name):
-    """Adjust tuning offsets by CentOffset (virtual capo correction)."""
+def _split_cent_offset(cent_offset):
+    """Split CentOffset into (whole_semitone_shift, residual_cents).
+    23 -> (0, 23). -120 -> (-1, -20). 0 -> (0, 0)."""
     if not cent_offset:
-        return offsets
+        return 0, 0
     shift = round(cent_offset / 100)
+    return shift, int(round(cent_offset - shift * 100))
+
+
+def _apply_semitone_shift(offsets, shift, arr_name):
+    """Add a whole-semitone shift to the played strings (4 for Bass, else 6)."""
+    if not shift:
+        return offsets
     n_strings = 4 if arr_name == "Bass" else 6
     return [o + shift if i < n_strings else o
             for i, o in enumerate(offsets)]
 
 
 @lru_cache(maxsize=256)
-def _parse_sloppak_tunings(sloppak_path: str) -> dict[str, tuple[int, ...]]:
+def _parse_sloppak_tunings(sloppak_path: str) -> dict[str, tuple]:
     """Parse and cache all arrangement tunings from a sloppak manifest.
 
     Sloppak tunings already include any cent/semitone adjustment baked in
-    (no separate CentOffset field), so no further correction is needed.
+    (no separate CentOffset field), so residual_cents is always 0.
+    Returns {arr_name: (offsets_tuple, residual_cents)}.
     """
     from sloppak import load_manifest
     manifest = load_manifest(Path(sloppak_path))
-    arr_tunings: dict[str, tuple[int, ...]] = {}
+    arr_tunings: dict[str, tuple] = {}
     for entry in manifest.get("arrangements", []) or []:
         if not isinstance(entry, dict):
             continue
@@ -36,13 +45,14 @@ def _parse_sloppak_tunings(sloppak_path: str) -> dict[str, tuple[int, ...]]:
             continue
         # Normalize to 6 slots (sloppak spec allows 5/7-string content).
         offsets = [int(tun[i]) if i < len(tun) else 0 for i in range(6)]
-        arr_tunings[name] = tuple(offsets)
+        arr_tunings[name] = (tuple(offsets), 0)
     return arr_tunings
 
 
 @lru_cache(maxsize=256)
-def _parse_tunings(psarc_path: str) -> dict[str, tuple[int, ...]]:
-    """Parse and cache all arrangement tunings from a PSARC."""
+def _parse_tunings(psarc_path: str) -> dict[str, tuple]:
+    """Parse and cache all arrangement tunings from a PSARC.
+    Returns {arr_name: (offsets_tuple, residual_cents)}."""
     from psarc import read_psarc_entries
     files = read_psarc_entries(psarc_path, ["*.json"])
 
@@ -70,8 +80,9 @@ def _parse_tunings(psarc_path: str) -> dict[str, tuple[int, ...]]:
             if tun and isinstance(tun, dict):
                 offsets = [tun.get(f"string{i}", 0) for i in range(6)]
                 cent_offset = attrs.get("CentOffset", 0.0) or 0.0
-                offsets = _apply_cent_offset(offsets, cent_offset, arr_name)
-                arr_tunings[arr_name] = tuple(offsets)
+                shift, residual = _split_cent_offset(cent_offset)
+                offsets = _apply_semitone_shift(offsets, shift, arr_name)
+                arr_tunings[arr_name] = (tuple(offsets), residual)
 
     return arr_tunings
 
@@ -95,16 +106,20 @@ def setup(app, context):
             elif lower.endswith(".sloppak"):
                 arr_tunings = _parse_sloppak_tunings(str(song_path))
             else:
-                return {"tuning": [0, 0, 0, 0, 0, 0]}
+                return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}
         except (ValueError, OSError, KeyError):
-            return {"tuning": [0, 0, 0, 0, 0, 0]}
+            return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}
 
         if not arr_tunings:
-            return {"tuning": [0, 0, 0, 0, 0, 0]}
+            return {"tuning": [0, 0, 0, 0, 0, 0], "centOffsetResidual": 0}
+
+        def _resp(entry):
+            offsets, residual = entry
+            return {"tuning": list(offsets), "centOffsetResidual": residual}
 
         if arrangement and arrangement in arr_tunings:
-            return {"tuning": list(arr_tunings[arrangement])}
+            return _resp(arr_tunings[arrangement])
         for name in ("Lead", "Rhythm", "Combo"):
             if name in arr_tunings:
-                return {"tuning": list(arr_tunings[name])}
-        return {"tuning": list(next(iter(arr_tunings.values())))}
+                return _resp(arr_tunings[name])
+        return _resp(next(iter(arr_tunings.values())))
