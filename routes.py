@@ -62,7 +62,16 @@ def setup(app, context):
         if not psarc_path.exists():
             return {"error": "File not found"}
 
-        arr_tunings = _parse_tunings(str(psarc_path))
+        # Sloppak files have a different layout; midi_capo only understands
+        # PSARC. Bail gracefully so the renderer gets a default tuning
+        # instead of a 500.
+        if not str(psarc_path).lower().endswith(".psarc"):
+            return {"tuning": [0, 0, 0, 0, 0, 0]}
+
+        try:
+            arr_tunings = _parse_tunings(str(psarc_path))
+        except (ValueError, OSError):
+            return {"tuning": [0, 0, 0, 0, 0, 0]}
 
         if not arr_tunings:
             return {"tuning": [0, 0, 0, 0, 0, 0]}
