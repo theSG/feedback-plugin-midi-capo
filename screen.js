@@ -1,6 +1,7 @@
 // MIDI Capo plugin
 // Auto-sets pitch shift via MIDI CC/PC based on song tuning.
 
+
 const _capoProfiles = {
     standard:  { name: 'Standard (Fractal, Helix, etc.)', minShift: -24, maxShift: 24, ccMin: 0,  ccMax: 127, defaultCC: 18, ccBypass: 64 },
     kemper:    { name: 'Kemper',                          minShift: -36, maxShift: 36, ccMin: 28, ccMax: 100, defaultCC: 38, ccBypass: 28 },
@@ -32,6 +33,11 @@ const _capoProfiles = {
             { pc: 7, semitones: -12 }, { pc: 8, semitones: -24 }, { pc: 9, semitones: -36 }
         ]
     },
+    ndsp_drop: {
+        name: 'Neural DSP',
+        minShift: -12, maxShift: 12, ccMin: 0,  ccMax: 127, defaultCC: 1, ccBypass: 0,
+        mapping: {'0': 0, '-1': 10, '-2': 20, '-3': 30, '-4': 40, '-5': 50, '-6': 60, '-7': 70 }
+    },
     custom:    { name: 'Custom',                          minShift: -24, maxShift: 24, ccMin: 0,  ccMax: 127, defaultCC: 18, ccBypass: 0 },
 };
 
@@ -44,6 +50,7 @@ let _capoLastArrangement = null;
 let _capoLastFilename = null;
 let _capoDisengaged = false;
 let _capoSettings = null;
+let _capoCurrentTone = null;
 
 // ── Settings (cached) ──────────────────────────────────────────────────
 
@@ -231,7 +238,7 @@ async function _capoSendPCToInternal(channel, value) {
     }
 }
 
-function _capoMidiSend(channel, cc, value, forceType) {
+function _capoMidiSend(channel, value, cc, forceType) {
     const settings = _capoGetSettings();
     const savedId = localStorage.getItem('midi_output_id');
     const hasInternal = !!(window.slopsmithDesktop?.audio);
@@ -464,9 +471,37 @@ function _capoOnSongReady(tuningPromise) {
             _capoLastTuning = t;
             _capoLastTitle = info?.title || '';
             _capoLastArrangement = info?.arrangement || '';
-            _capoSend(t);
+	    setTimeout(() => _capoSend(t), 500);
         }
     }).catch(() => {});
+}
+
+function _capoCheckToneChange() {
+    //if ((_capoLastShift === null) || (!_capoChannelReady(settings))) return;
+
+    const t = highway.getTime();
+    const changes = highway.getToneChanges();
+    const base = highway.getToneBase();
+
+    if (!changes || changes.length === 0) return;
+
+    // Find the active tone at current time
+    let activeTone = base;
+    for (const tc of changes) {
+        if (tc.t <= t) {
+            activeTone = tc.name;
+        } else {
+            break;
+        }
+    }
+
+    if (activeTone && activeTone !== _capoCurrentTone) {
+        _capoCurrentTone = activeTone;
+        // Look up mapping for this tone
+        // Optionally reset to center first, then resend
+    	//_capoSendCenter();
+    	setTimeout(() => _capoResend(), 180); // small delay for device to settle
+    }
 }
 
 function _capoOnArrangementChange(filename, arrangement) {
@@ -534,6 +569,11 @@ function _capoUpdateBadge(shift, drop, cents) {
 // ── Hooks ─────────────────────────────────────────────────────────────
 
 (function() {
+
+
+    // Poll for tone changes during playback
+    setInterval(_capoCheckToneChange, 100);
+
     const origPlaySong = window.playSong;
     window.playSong = async function(filename, arrangement) {
         const tuningPromise = _capoOnSongLoad(filename, arrangement);
